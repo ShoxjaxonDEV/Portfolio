@@ -9,10 +9,10 @@ st.markdown(
 
 @st.cache_resource
 def load_sklearn_assets():
-    base_dir = Path(r"D:\Python project\first ai\spam detector")
+    base_dir = Path(__file__).parent.parent
 
-    model_path = base_dir / "spam_model_n1.pkl"
-    vectorizer_path = base_dir / "vector.pkl"
+    model_path = base_dir / "models" / "spam_model_n1.pkl"
+    vectorizer_path = base_dir / "models" / "vector.pkl"
 
     # Проверим прямо в коде, существуют ли файлы на диске
     if not model_path.exists():

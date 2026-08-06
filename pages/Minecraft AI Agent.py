@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 from PIL import Image
 from ultralytics import YOLO
+from pathlib import Path
 
 st.title("👁️ Детекция блоков в Minecraft (YOLO)")
 st.markdown("Загрузите скриншот из игры, чтобы модель обнаружила и выделила блоки.")
@@ -11,12 +12,13 @@ st.markdown("Загрузите скриншот из игры, чтобы мо�
 # Загрузка модели (кешируем, чтобы не грузить заново при каждом клике)
 @st.cache_resource
 def load_yolo_model():
-    path = r"D:\python project\first ai\Minecraft Ai Agent\runs\detect\train-6\weights\best.pt"
+    current_dir = Path(__file__).parent.parent
+    model_path = current_dir / "models" / "best.pt"
     try:
-        model = YOLO(path)
+        model = YOLO(model_path)
         return model
     except Exception as e:
-        st.error(f"Не удалось загрузить модель по пути: `{path}`. Ошибка: {e}")
+        st.error(f"Не удалось загрузить модель по пути: `{model_path}`. Ошибка: {e}")
         return None
 
 
