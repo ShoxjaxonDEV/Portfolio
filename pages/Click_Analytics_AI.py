@@ -1,18 +1,12 @@
 import os
 import pandas as pd
 import streamlit as st
-import sys
 from langchain_community.document_loaders import DataFrameLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from types import ModuleType
-
-# Создаем фейковый модуль cv2 в памяти, чтобы библиотека transformers не падала при импорте
-if "cv2" not in sys.modules:
-    fake_cv2 = ModuleType("cv2")
-    sys.modules["cv2"] = fake_cv2
 
 
 def show_click_analytics():
