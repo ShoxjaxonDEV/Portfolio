@@ -1,7 +1,5 @@
 import os
-import pandas as pd
 import streamlit as st
-from langchain_community.document_loaders import DataFrameLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,46 +9,46 @@ from langchain_core.prompts import ChatPromptTemplate
 def show_click_analytics():
     """
     Модуль ИИ-аналитики отзывов Click.
-    Можно вызвать внутри твоего существующего меню страниц.
+    РАБОТАЕТ НАПРЯМУЮ С ВЕКТОРНОЙ БАЗОЙ (Без использования CSV-файла).
     """
     st.title("📊 Click Analytics AI")
     st.caption("Интеллектуальный ИИ-помощник продуктовой команды и службы поддержки Click")
 
     # БЕЗОПАСНАЯ НАСТРОЙКА КЛЮЧА
-    # Сначала проверяем Secrets Стримлита (для облака), если его нет — берем жесткий ключ (для локальных тестов)
     api_key = st.secrets["GOOGLE_API_KEY"]
 
     os.environ["GOOGLE_API_KEY"] = api_key
     DB_FAISS_PATH = "faiss_index_click"
 
-    # КЭШИРОВАННАЯ ЗАГРУЗКА СИСТЕМЫ
+    # МГНОВЕННАЯ ЗАГРУЗКА ВЕКТОРНОЙ БАЗЫ С ДИСКА
     @st.cache_resource
     def load_vector_db():
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
         if os.path.exists(DB_FAISS_PATH):
-            # Загружаем готовую базу напрямую, CSV файл больше не нужен!
             return FAISS.load_local(DB_FAISS_PATH, embeddings, allow_dangerous_deserialization=True)
         else:
             st.error(
-                f"❌ Ошибка: Папка векторной базы '{DB_FAISS_PATH}' не найдена! Убедитесь, что она лежит в корне проекта.")
+                f"Ошибка: Папка векторной базы '{DB_FAISS_PATH}' не найдена! Убедитесь, что она лежит в корне проекта.")
             return None
 
-    # Инициализация
     vector_store = load_vector_db()
     if vector_store is None:
         return
+
     try:
+        # Фиксируем стабильную версию модели
         llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", google_api_key=api_key, temperature=0.3)
     except Exception as e:
-        st.error(f"Ошибка инициализации модуля: {e}")
+        st.error(f"Ошибка инициализации Gemini API: {e}")
         return
 
     st.divider()
 
-    total_reviews = vector_store.index.ntotal  # Вытаскиваем точное число строк прямо из FAISS (покажет 229)
-    negative_reviews = 98  # Сумма отзывов с оценкой 1★ (78) и 2★ (20)
-    positive_reviews = 92  # Отзывы с оценкой 5★
+    # СЕКЦИЯ МЕТРИК
+    total_reviews = vector_store.index.ntotal
+    negative_reviews = 98
+    positive_reviews = 92
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -65,33 +63,51 @@ def show_click_analytics():
     # ТАБЫ ИНТЕРФЕЙСА
     tab1, tab2 = st.tabs(["🔎 Поиск инсайтов (RAG)", "Автоответчик поддержки"])
 
-    # Вкладка 1: RAG Поиск
+    # Вкладка 1: RAG Поиск с умной фильтрацией звезд
     with tab1:
         st.subheader("Задайте вопрос по фидбеку пользователей")
         user_question = st.text_input(
             "Введите ваш запрос:",
-            placeholder="Например: На что чаще всего жалуются в негативных отзывах?",
-            key="click_rag_input"
+            placeholder="Например: На что чаще всего жалуются в отзывах с оценкой 1 звезда?",
+            key="click_rag_input_new"
         )
 
         if user_question:
             with st.spinner("Нейросеть анализирует контекст отзывов..."):
-                relevant_docs = vector_store.similarity_search(user_question, k=5)
-                context = "".join(
-                    [f"Отзыв (Рейтинг: {d.metadata['rating']}★): {d.page_content}\n\n" for d in relevant_docs])
+                # УМНЫЙ ФИЛЬТР ЗВЕЗД
+                filter_dict = None
+                q_lower = user_question.lower()
 
-                prompt_template = ChatPromptTemplate.from_messages([
+                if "1 звезда" in q_lower or "1★" in q_lower or "оценкой 1" in q_lower or "единиц" in q_lower:
+                    filter_dict = {"rating": "1"}
+                elif "5 звезд" in q_lower or "5★" in q_lower or "оценкой 5" in q_lower or "пятер" in q_lower:
+                    filter_dict = {"rating": "5"}
+                elif "2 звезд" in q_lower or "2★" in q_lower or "оценкой 2" in q_lower:
+                    filter_dict = {"rating": "2"}
+
+                # Выполняем поиск по базе FAISS
+                if filter_dict:
+                    relevant_docs = vector_store.similarity_search(user_question, k=5, filter=filter_dict)
+                else:
+                    relevant_docs = vector_store.similarity_search(user_question, k=5)
+
+                # Собираем контекст безопасности
+                context = ""
+                for index, d in enumerate(relevant_docs, 1):
+                    context += f"Отзыв №{index} (Рейтинг: {d.metadata['rating']}★): {d.page_content}\n\n"
+
+                # Промпт аналитика
+                prompt = ChatPromptTemplate.from_messages([
                     ("system",
-                     "Ты — ИИ-аналитик платежной системы Click в Узбекистане. Дай четкий, структурированный ответ на русском языке, опираясь строго на факты."
-                     "Тебе предоставлен контекст, состоящий из реальных отзывов пользователей на разных языках. "
-                     "Твоя задача — внимательно изучить эти отзывы и дать четкий, структурированный ответ на вопрос менеджера на РУССКОМ или УЗБЕКСТКОМ языке. "
+                     "Ты — ИИ-аналитик платежной системы Click в Узбекистане. Дай структурированный отчет на русском языке, опираясь строго на предоставленный контекст отзывов. Пиши четко, без лишней воды."
                      "Пиши только факты, опираясь строго на предоставленные отзывы. Не придумывай лишнего.\n\n"
                      "Если вопрос не по системе Click говори пользователю задать вопрос по системе Click. "
                      ),
-                    ("human", "КОНТЕКСТ С ОТЗЫВАМИ:\n{context}\n\nВопрос: {question}")
+                    ("human", "КОНТЕКСТ С ОТЗЫВАМИ:\n{context}\n\nВОПРОС: {question}")
                 ])
 
-                chain = prompt_template | llm
+                # Безопасный вызов цепочки
+                chain = prompt | llm
                 response = chain.invoke({"context": context, "question": user_question})
 
                 st.markdown("Аналитический отчет ИИ:")
@@ -102,40 +118,39 @@ def show_click_analytics():
                         st.write(f"**Рейтинг:** {doc.metadata['rating']}★ | **Текст:** {doc.page_content}")
                         st.write("---")
 
-    # Вкладка 2: Автоответчик
+    # Вкладка 2: Полностью исправленный Автоответчик
     with tab2:
         st.subheader("Генератор официальных ответов для клиентов")
         customer_complaint = st.text_area(
             "Вставьте текст жалобы или отзыва клиента:",
             placeholder="Например: Почему при переводе на Uzcard сняли комиссию?!",
-            key="click_complaint_input"
+            key="click_complaint_area"
         )
 
         if customer_complaint:
             col_lang1, col_lang2 = st.columns(2)
             with col_lang1:
-                btn_ru = st.button("Сгенерировать ответ на русском", key="click_btn_ru")
+                btn_ru = st.button("Сгенерировать ответ на русском", key="click_btn_ru_new")
             with col_lang2:
-                btn_uz = st.button("Сгенерировать ответ на узбекском", key="click_btn_uz")
+                btn_uz = st.button("Сгенерировать ответ на узбекском", key="click_btn_uz_new")
 
             if btn_ru or btn_uz:
-                target_lang = "русском языке" if btn_ru else "узбекском языке (O'zbek tilida, рассудительно и официально)"
+                target_lang = "русском языке" if btn_ru else "узбекском языке (O'zbek tilida, официально и уважительно)"
 
                 with st.spinner("Формирую вежливый ответ..."):
+                    # Исправленная структура промпта без конфликтов переменных
                     reply_prompt = ChatPromptTemplate.from_messages([
                         ("system",
-                         f"Ты — специалист поддержки Click. Напиши вежливый ответ клиенту на его жалобу строго на {target_lang}."
-                         "Тебе предоставлен контекст, состоящий из реальных отзывов пользователей на разных языках. "
-                         "Твоя задача — внимательно изучить эти отзывы и дать четкий, структурированный ответ на вопрос менеджера на РУССКОМ или УЗБЕКСТКОМ языке. "
+                         f"Ты — идеальный специалист поддержки Click. Напиши вежливый, эмпатичный ответ клиенту на его жалобу строго на {target_lang}. Извинись за неудобства и пообещай разобраться."
                          "Пиши только факты, опираясь строго на предоставленные отзывы. Не придумывай лишнего.\n\n"
                          "Если вопрос не по системе Click говори пользователю задать вопрос по системе Click. "
-                         "КОНТЕКСТ С ОТЗЫВАМИ:\n{context}"
                          ),
-                        ("human", "Жалоба: {complaint}")
+                        ("human", "Жалоба клиента: {question}")
+                        # используем стандартную переменную question, чтобы LangChain не путался
                     ])
 
                     reply_chain = reply_prompt | llm
-                    bot_reply = reply_chain.invoke({"complaint": customer_complaint})
+                    bot_reply = reply_chain.invoke({"question": customer_complaint})
 
                     st.markdown("Шаблон ответа для отправки клиенту:")
                     st.success(bot_reply.content)
