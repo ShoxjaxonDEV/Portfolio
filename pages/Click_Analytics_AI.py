@@ -154,3 +154,4 @@ def show_click_analytics():
 
                     st.markdown("Шаблон ответа для отправки клиенту:")
                     st.success(bot_reply.content)
+show_click_analytics()
