@@ -4,6 +4,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains import LLMChain
+
 
 
 def show_click_analytics():
@@ -91,34 +93,39 @@ def show_click_analytics():
                 else:
                     relevant_docs = vector_store.similarity_search(user_question, k=5)
 
-                # Собираем контекст безопасности
+                # Собираем контекст
                 context = ""
                 for index, d in enumerate(relevant_docs, 1):
-                    context += f"Отзыв №{index} (Рейтинг: {d.metadata['rating']}★): {d.page_content}\n\n"
-
-                # Промпт аналитика
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system",
-                     "Ты — ИИ-аналитик платежной системы Click в Узбекистане. Дай структурированный отчет на русском языке, опираясь строго на предоставленный контекст отзывов. Пиши четко, без лишней воды."
-                     "Пиши только факты, опираясь строго на предоставленные отзывы. Не придумывай лишнего.\n\n"
-                     "Если вопрос не по системе Click говори пользователю задать вопрос по системе Click. "
-                     ),
+                    # Важнейший фикс: убираем фигурные скобки из текста отзывов, чтобы LangChain не падал!
+                    safe_text = str(d.page_content).replace("{", "[").replace("}", "]")
+                    context += f"Отзыв №{index} (Рейтинг: {d.metadata['rating']}★): {safe_text}\n\n"
+                
+                # 5. Шаблон промпта
+                prompt_template = ChatPromptTemplate.from_messages([
+                    ("system", "Ты — ИИ-аналитик платежной системы Click в Узбекистане. Дай структурированный отчет на русском языке, опираясь строго на предоставленный контекст отзывов. Пиши четко."
+                    "Пиши только факты, опираясь строго на предоставленные отзывы. Не придумывай лишнего.\n\n"
+                    "Если вопрос не по системе Click говори пользователю задать вопрос по системе Click. "),
                     ("human", "КОНТЕКСТ С ОТЗЫВАМИ:\n{context}\n\nВОПРОС: {question}")
                 ])
-
-                # Безопасный вызов цепочки
-                chain = prompt | llm
-                response = chain.invoke({"context": context, "question": user_question})
-                # Достаем исключительно текстовую начинку ответа модели
-                clean_text = response.content if hasattr(response, "content") else str(response)
-
-                st.markdown("Аналитический отчет ИИ:")
-                st.markdown(clean_text)
-
-                with st.expander("Посмотреть оригиналы найденных отзывов"):
-                    for doc in relevant_docs:
-                        st.write(f"**Рейтинг:** {doc.metadata['rating']}★ | **Текст:** {doc.page_content}")
-                        st.write("---")
+                
+                try:
+                    # Этот метод игнорирует любые внутренние конфликты типов в Python 3.10/3.14
+                    chain = LLMChain(llm=llm, prompt=prompt_template)
+                    response = chain.run(context=context, question=user_question)
+                    
+                    # LLMChain возвращает СТРОГУЮ чистую текстовую строку! Никаких списков, скобок и signature
+                    clean_text = str(response).strip()
+                    
+                    st.markdown("Аналитический отчет ИИ:")
+                    st.markdown(clean_text) # Выведет идеальный, чистый текст
+                    
+                    with st.expander("Посмотреть оригиналы найденных отзывов"):
+                        for doc in relevant_docs:
+                            st.write(f"**Рейтинг:** {doc.metadata['rating']}★ | **Текст:** {doc.page_content}")
+                            st.write("---")
+                            
+                except Exception as inner_e:
+                    st.error(f"Ошибка генерации через Google API: {inner_e}")
 
     # Вкладка 2: Полностью исправленный Автоответчик
     with tab2:
@@ -141,21 +148,21 @@ def show_click_analytics():
 
                 with st.spinner("Формирую вежливый ответ..."):
                     # Исправленная структура промпта без конфликтов переменных
-                    reply_prompt = ChatPromptTemplate.from_messages([
-                        ("system",
-                         f"Ты — идеальный специалист поддержки Click. Напиши вежливый, эмпатичный ответ клиенту на его жалобу строго на {target_lang}. Извинись за неудобства и пообещай разобраться."
-                         "Пиши только факты, опираясь строго на предоставленные отзывы. Не придумывай лишнего.\n\n"
-                         "Если вопрос не по системе Click говори пользователю задать вопрос по системе Click. "
-                         ),
-                        ("human", "Жалоба клиента: {question}")
-                        # используем стандартную переменную question, чтобы LangChain не путался
-                    ])
-
-                    reply_chain = reply_prompt | llm
-                    bot_reply = reply_chain.invoke({"question": customer_complaint})
-
-                    clean_reply = bot_reply.content if hasattr(bot_reply, "content") else str(bot_reply)
-
-                    st.markdown("Шаблон ответа для отправки клиенту:")
-                    st.success(clean_reply)
+                    try:
+                        reply_prompt = ChatPromptTemplate.from_messages([
+                            ("system", f"Ты — специалист поддержки Click. Напиши вежливый ответ клиенту на его жалобу строго на {target_lang}. Извинись за неудобства и пообещай разобраться."
+                            "Если вопрос не по системе Click говори пользователю задать вопрос по системе Click. "),
+                            ("human", "Жалоба клиента: {question}")
+                        ])
+                        
+                        # Вызываем через стабильный LLMChain
+                        from langchain.chains import LLMChain
+                        reply_chain = LLMChain(llm=llm, prompt=reply_prompt)
+                        bot_reply = reply_chain.run(question=customer_complaint)
+                        
+                        st.markdown("Шаблон ответа для отправки клиенту:")
+                        st.success(str(bot_reply).strip()) # Выведет чистый вежливый ответ без мусора
+                    
+                    except Exception as inner_e:
+                        st.error(f"Ошибка автоответчика: {inner_e}")
 show_click_analytics()
