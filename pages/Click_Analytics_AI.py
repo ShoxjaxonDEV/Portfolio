@@ -1,11 +1,18 @@
 import os
 import pandas as pd
 import streamlit as st
+import sys
 from langchain_community.document_loaders import DataFrameLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from types import ModuleType
+
+# Создаем фейковый модуль cv2 в памяти, чтобы библиотека transformers не падала при импорте
+if "cv2" not in sys.modules:
+    fake_cv2 = ModuleType("cv2")
+    sys.modules["cv2"] = fake_cv2
 
 
 def show_click_analytics():
@@ -16,8 +23,6 @@ def show_click_analytics():
     st.title("📊 Click Analytics AI")
     st.caption("Интеллектуальный ИИ-помощник продуктовой команды и службы поддержки Click")
 
-    # БЕЗОПАСНАЯ НАСТРОЙКА КЛЮЧА
-    # Сначала проверяем Secrets Стримлита (для облака), если его нет — берем жесткий ключ (для локальных тестов)
     api_key = st.secrets["GOOGLE_API_KEY"]
 
     os.environ["GOOGLE_API_KEY"] = api_key
@@ -29,7 +34,6 @@ def show_click_analytics():
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
         if os.path.exists(DB_FAISS_PATH):
-            # Загружаем готовую базу напрямую, CSV файл больше не нужен!
             return FAISS.load_local(DB_FAISS_PATH, embeddings, allow_dangerous_deserialization=True)
         else:
             st.error(
