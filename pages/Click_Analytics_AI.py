@@ -109,9 +109,11 @@ def show_click_analytics():
                 # Безопасный вызов цепочки
                 chain = prompt | llm
                 response = chain.invoke({"context": context, "question": user_question})
+                # Достаем исключительно текстовую начинку ответа модели
+                clean_text = response.content if hasattr(response, "content") else str(response)
 
                 st.markdown("Аналитический отчет ИИ:")
-                st.info(response.content)
+                st.markdown(clean_text)
 
                 with st.expander("Посмотреть оригиналы найденных отзывов"):
                     for doc in relevant_docs:
@@ -152,6 +154,8 @@ def show_click_analytics():
                     reply_chain = reply_prompt | llm
                     bot_reply = reply_chain.invoke({"question": customer_complaint})
 
+                    clean_reply = bot_reply.content if hasattr(bot_reply, "content") else str(bot_reply)
+
                     st.markdown("Шаблон ответа для отправки клиенту:")
-                    st.success(bot_reply.content)
+                    st.success(clean_reply)
 show_click_analytics()
