@@ -108,20 +108,31 @@ def show_click_analytics():
                 ])
                 
                 try:
-                    # Этот метод игнорирует любые внутренние конфликты типов в Python 3.10/3.14
-                    chain = LLMChain(llm=llm, prompt=prompt_template)
-                    response = chain.run(context=context, question=user_question)
+                    # 1. Собираем стандартную цепочку
+                    chain = prompt_template | llm
+                    response = chain.invoke({"context": context, "question": user_question})
                     
-                    # LLMChain возвращает СТРОГУЮ чистую текстовую строку! Никаких списков, скобок и signature
-                    clean_text = str(response).strip()
+                    # 2. Достаем сырой контент
+                    raw_content = response.content if hasattr(response, "content") else response
                     
-                    st.markdown("Аналитический отчет ИИ:")
-                    st.markdown(clean_text) # Выведет идеальный, чистый текст
+                    # 3. Если прилетел багнутый список со словарем [{'type': 'text', 'text': '...'}]
+                    if isinstance(raw_content, list) and len(raw_content) > 0:
+                        first_item = raw_content[0]
+                        if isinstance(first_item, dict) and "text" in first_item:
+                            clean_text = first_item["text"]
+                        else:
+                            clean_text = str(first_item)
+                    else:
+                        clean_text = str(raw_content)
+                    
+                    st.markdown(" Аналитический отчет ИИ:")
+                    st.markdown(clean_text.strip())
                     
                     with st.expander("Посмотреть оригиналы найденных отзывов"):
                         for doc in relevant_docs:
                             st.write(f"**Рейтинг:** {doc.metadata['rating']}★ | **Текст:** {doc.page_content}")
                             st.write("---")
+
                             
                 except Exception as inner_e:
                     st.error(f"Ошибка генерации через Google API: {inner_e}")
@@ -154,13 +165,24 @@ def show_click_analytics():
                             ("human", "Жалоба клиента: {question}")
                         ])
                         
-                        # Вызываем через стабильный LLMChain
-                        from langchain.chains import LLMChain
-                        reply_chain = LLMChain(llm=llm, prompt=reply_prompt)
-                        bot_reply = reply_chain.run(question=customer_complaint)
+                        reply_chain = reply_prompt | llm
+                        bot_reply = reply_chain.invoke({"question": customer_complaint})
                         
-                        st.markdown("Шаблон ответа для отправки клиенту:")
-                        st.success(str(bot_reply).strip()) # Выведет чистый вежливый ответ без мусора
+                        # 2. Достаем сырой контент
+                        raw_reply = bot_reply.content if hasattr(bot_reply, "content") else bot_reply
+                        
+                        # 3. Очищаем от скобок
+                        if isinstance(raw_reply, list) and len(raw_reply) > 0:
+                            first_item = raw_reply[0]
+                            if isinstance(first_item, dict) and "text" in first_item:
+                                clean_reply = first_item["text"]
+                            else:
+                                clean_reply = str(first_item)
+                        else:
+                            clean_reply = str(raw_reply)
+                        
+                        st.markdown("ответ для клиента:")
+                        st.success(clean_reply.strip())
                     
                     except Exception as inner_e:
                         st.error(f"Ошибка автоответчика: {inner_e}")
